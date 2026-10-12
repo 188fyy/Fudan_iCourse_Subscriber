@@ -18,6 +18,7 @@ import markdown
 from pygments.formatters import HtmlFormatter
 
 from src.runtime import config
+from src.ai.mindmap_render import stash_maps
 
 _MD_EXTENSIONS= ["tables", "fenced_code", "nl2br", "sane_lists", "codehilite"]
 
@@ -166,6 +167,7 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
                     with {cid_name: png_bytes} entries for the caller to attach
                     to the MIME message.
     """
+    md_text, mindmaps = stash_maps(md_text, cid_images)
     latex_map: dict[str, str] = {}
     counter = 0
 
@@ -259,6 +261,8 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
 
         html = html.replace(key, img_tag)
 
+    for key, diagram in mindmaps.items():
+        html = html.replace("<p>" + key + "</p>", diagram).replace(key, diagram)
     return html
 
 

@@ -14,6 +14,7 @@ Anything more interesting belongs in one of ``src/*`` modules.
 """
 
 import time
+import os
 import traceback
 
 from src.runtime import config
@@ -327,6 +328,11 @@ def run():
 
     try:
         all_lectures = _enumerate_lectures(client, db, reporter)
+        limit = int(os.environ.get("MAX_LECTURES_PER_RUN", "0"))
+        if limit < 0:
+            raise ValueError("MAX_LECTURES_PER_RUN must be non-negative")
+        if limit:
+            all_lectures = all_lectures[:limit]
         _drive_lectures(
             client, db, scheduler, transcriber, summarizer, reporter,
             all_lectures, email_items,

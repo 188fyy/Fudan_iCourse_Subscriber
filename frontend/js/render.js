@@ -54,8 +54,42 @@ function _restoreFormulas(html, formulas) {
 
 function _renderMarkdown(mdText) {
   if (!mdText) return "";
+  var maps = [];
+  mdText = mdText.replace(/```icourse-mindmap\s*\n([\s\S]*?)\n```/g, function (_, source) {
+    var key = "ICOURSEMINDMAPPLACEHOLDER" + maps.length;
+    try {
+      var count = 0;
+      function esc(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+          return {"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c];
+        });
+      }
+      function node(n, depth) {
+        if (++count > 60 || depth > 4 || !n || typeof n.topic !== "string" ||
+            n.topic.length > 80 || !n.topic.trim() ||
+            (n.children !== undefined && !Array.isArray(n.children))) throw new Error("Invalid map");
+        var tags = (Array.isArray(n.labels) ? n.labels : []).filter(function (tag) {
+          return ["重点", "考点", "补充理解", "不考试"].includes(tag);
+        }).map(function (tag) { return "【" + esc(tag) + "】"; }).join(" ");
+        var label = esc(n.topic) + (tags ? " <strong>" + tags + "</strong>" : "");
+        var children = n.children || [];
+        return children.length ? '<li><details open><summary>' + label + '</summary><ul>' +
+          children.map(function (c) { return node(c, depth + 1); }).join("") + '</ul></details></li>' :
+          '<li><span class="mindmap-leaf">' + label + '</span></li>';
+      }
+      maps.push('<div class="icourse-mindmap" aria-label="本课次思维导图"><p>点击节点可展开或收起</p><ul>' +
+        node(JSON.parse(source), 1) + '</ul></div>');
+    } catch (_) {
+      maps.push('<pre>思维导图数据无效</pre>');
+    }
+    return "\n\n" + key + "\n\n";
+  });
   var stashed = _stashFormulas(mdText);
   var rawHtml = marked.parse(stashed.text, { breaks: true });
+  maps.forEach(function (map, i) {
+    var key = "ICOURSEMINDMAPPLACEHOLDER" + i;
+    rawHtml = rawHtml.replace("<p>" + key + "</p>", map).replace(key, map);
+  });
   var restored = _restoreFormulas(rawHtml, stashed.formulas);
   return DOMPurify.sanitize(restored);
 }

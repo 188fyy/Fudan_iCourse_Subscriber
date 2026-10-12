@@ -5,6 +5,7 @@ import time
 from openai import OpenAI
 
 from src.runtime import config
+from src.ai.study_notes import STUDY_PROMPT, format_notes
 
 SYSTEM_PROMPT= r"""你是一个专业的课程助教。你的任务是根据用户提供的课程录音文本和ppt文字ocr部分，生成用于学生自学和期末复习的详细笔记。
 1. **直接输出**：不要包含任何"好的"、"没问题"、"以下是总结"等客套话，不要输出全局课程名称大标题（由系统自动生成），直接开始总结即可。
@@ -94,7 +95,7 @@ class Summarizer:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT + STUDY_PROMPT},
                 {
                     "role": "user",
                     # 注意：这里的 1:7 与 system prompt 中声称的 1:8 不一致是有意为之
@@ -102,12 +103,16 @@ class Summarizer:
                     "content": f"以下是课程《{title}》的录音文本，根据长度，你应该输出的字符数大约为{len(content) // 7}字，请开始总结：\n\n{content}",
                 },
             ],
-            # temperature=0.3,
-            timeout=180,
+            response_format={"type": "json_object"},
+            max_tokens=24000,
+            timeout=300,
         )
         if not response.choices:
             raise ValueError("API returned empty choices — likely content filter or quota exceeded")
         result = response.choices[0].message.content
+        if response.choices[0].finish_reason != "stop" or not result:
+            raise ValueError("Incomplete study notes response")
+        result = format_notes(result, content)
         elapsed = time.time() - t0
         # Token usage helps explain run cost — every provider's billing is
         # token-based, and rate-limit decisions key off prompt size much

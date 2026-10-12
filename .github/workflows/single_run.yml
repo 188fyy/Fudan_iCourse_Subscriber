@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      max_lectures:
+        description: "Maximum lectures for this run (0 = all; first deployment: 1)"
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: write
@@ -162,6 +167,7 @@ jobs:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
           COURSE_IDS: ${{ inputs.course_ids }}
+          MAX_LECTURES_PER_RUN: ${{ inputs.max_lectures }}
           USE_OFFICIAL_TRANSCRIPT: ${{ inputs.use_official_transcript && '1' || '' }}
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}

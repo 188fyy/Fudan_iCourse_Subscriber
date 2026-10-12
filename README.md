@@ -1,5 +1,17 @@
 # iCourse Subscriber V2
 
+## 本 Fork 的学习笔记增强
+
+- 使用 DeepSeek 官方 `deepseek-flash`，仅配置 `DEEPSEEK_API_KEY` 即可。
+- 在对应知识点标题标注老师明确表达的重点、考点、补充理解、不考试；附可核对的转录原话和所在时间区间。没有明确原话则不标注，不将“了解即可”推断成“不考试”。语义判断仍依赖模型，复习时可根据原话核对范围和条件。
+- 每课次生成独立思维导图。网页可展开/收起节点；邮件嵌入 PNG，PDF 使用本地生成的 PNG；导图内容不会上传第三方绘图服务。
+- 数据库仍存储 Markdown 摘要，导图保存在 `icourse-mindmap` 代码块，旧笔记仍可查看。已有摘要不自动重生成。
+- 首次部署建议用 **Single Run**，填入一个课程 ID，`max_lectures` 保持 `1`，先验证一节课的笔记、邮件和网页，再运行 **iCourse Check** 处理全部订阅。定时任务默认每天北京时间 19:36 执行，首次全量处理会产生所有已有课次的 API 用量。
+- Secrets：`STUID`、`UISPSW`、`COURSE_IDS`、`DEEPSEEK_API_KEY`、`SMTP_EMAIL`、`SMTP_PASSWORD`、`RECEIVER_EMAIL`。发送邮箱使用 QQ SMTP 授权码。
+- 在 Settings → Pages 中将 Source 设为 GitHub Actions；在 Actions 中启用 Fork 工作流并运行 Deploy Frontend。
+- 离线检查：`python scripts/test_study_notes.py`。GitHub 的 Test Study Notes 工作流也会自动执行这些检查。
+
+
 自动监控复旦大学 iCourse 智慧教学平台的课程更新，对新课次的录播视频进行**语音转文字 + PPT OCR + AI 摘要**，并通过邮件推送到你的邮箱。
 
 部署在 GitHub Actions 上，每天定时运行，**零成本、免服务器、全自动**。

@@ -47,6 +47,13 @@
 .prose hr { border: none; border-top: 1px solid #e0e0e0; margin: 1.5em 0; }
 
 /* Lecture state badges */
+.icourse-mindmap { overflow-x: auto; padding: 16px; border: 1px solid #cbd5e1; border-radius: 12px; background: #f8fafc; }
+.icourse-mindmap ul { list-style: none; padding-left: 20px; border-left: 2px solid #cbd5e1; }
+.icourse-mindmap li { margin: 12px 0; }
+.icourse-mindmap summary, .icourse-mindmap .mindmap-leaf { display: list-item; padding: 8px 12px; border-radius: 8px; background: #e0f2fe; overflow-wrap: anywhere; }
+.icourse-mindmap summary { cursor: pointer; }
+.icourse-mindmap p { color: #64748b; font-size: 12px; }
+
 .badge-ready      { background: #e8f5e9; color: #2e7d32; }
 .badge-processing { background: #fff3e0; color: #e65100; }
 .badge-waiting    { background: #f3f4f6; color: #6b7280; }
