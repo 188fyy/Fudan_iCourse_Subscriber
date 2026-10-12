@@ -1,11 +1,14 @@
 name: Single Run
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/single_run.yml']
   workflow_dispatch:
     inputs:
       course_ids:
         description: "Comma-separated course IDs to process (e.g. 30004,30005)"
-        required: true
+        required: false
         type: string
       use_official_transcript:
         description: "Use official iCourse transcripts instead of ASR"
@@ -166,8 +169,8 @@ jobs:
         env:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
-          COURSE_IDS: ${{ inputs.course_ids }}
-          MAX_LECTURES_PER_RUN: ${{ inputs.max_lectures }}
+          COURSE_IDS: ${{ inputs.course_ids || secrets.COURSE_IDS }}
+          MAX_LECTURES_PER_RUN: ${{ inputs.max_lectures || '1' }}
           USE_OFFICIAL_TRANSCRIPT: ${{ inputs.use_official_transcript && '1' || '' }}
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
