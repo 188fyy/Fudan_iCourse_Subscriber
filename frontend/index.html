@@ -205,13 +205,13 @@
       <!-- GitHub PAT -->
       <div>
         <label class="block text-xs text-gray-500 mb-1">
-          GitHub Fine-grained PAT
+          GitHub Fine-grained PAT（公开仓库仅查看笔记时可留空）
           <a href="https://github.com/settings/personal-access-tokens/new" target="_blank"
              class="text-blue-500 underline ml-1">Create</a>
         </label>
         <input x-model="setup.token" type="password" placeholder="github_pat_..."
                class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
-        <p class="text-xs text-gray-400 mt-1">Scope: this repo only, Contents: Read and Write</p>
+        <p class="text-xs text-gray-400 mt-1">只查看笔记无需令牌。私有仓库需 Contents: Read；触发导出/运行需 Actions: Read and Write；编辑订阅另需 Secrets: Read and Write。令牌仅授权本仓库。</p>
       </div>
 
       <!-- 4 Secrets -->

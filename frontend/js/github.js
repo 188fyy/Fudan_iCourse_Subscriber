@@ -11,7 +11,7 @@ const _GH_API = "https://api.github.com";
 
 function _ghHeaders(token) {
   return {
-    Authorization: `token ${token}`,
+    ...(token ? { Authorization: `token ${token}` } : {}),
     Accept: "application/vnd.github+json",
   };
 }
@@ -48,7 +48,7 @@ async function _fetchBlobBytes(owner, repo, blobSha, token) {
     `${_GH_API}/repos/${owner}/${repo}/git/blobs/${blobSha}`,
     {
       headers: {
-        Authorization: `token ${token}`,
+        ...(token ? { Authorization: `token ${token}` } : {}),
         Accept: "application/vnd.github.raw",
       },
     }
