@@ -362,7 +362,7 @@ class LectureRunner:
                 f" — mode={mode}, prompt={len(prompt_text)} chars"
             )
             summary, model_used = self._summarizer.summarize(
-                course_title, prompt_text,
+                course_title, prompt_text, transcript_chars=len(transcript),
             )
             self._reporter.info(
                 f"    [OK] Summary by {model_used}: {len(summary)} chars"

@@ -157,6 +157,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
     each LectureRunner.run via ``next_info``.
     """
     if not all_lectures:
+        reporter.lecture_results(0, 0, 0, 0)
         return
 
     runner = LectureRunner(
@@ -166,6 +167,7 @@ def _drive_lectures(client: ICourseClient, db: Database,
     first_course, _, first_lec = all_lectures[0]
     runner.prefetch_first(first_course, str(first_lec["sub_id"]))
 
+    succeeded = failed = skipped = 0
     for i, (course_id, course_title, lecture) in enumerate(all_lectures):
         sub_id = str(lecture["sub_id"])
         next_info: tuple[str, str] | None = None
@@ -173,8 +175,8 @@ def _drive_lectures(client: ICourseClient, db: Database,
             next_course, _, next_lec = all_lectures[i + 1]
             next_info = (next_course, str(next_lec["sub_id"]))
 
-        _check_session(client)
         try:
+            _check_session(client)
             summary = runner.run(
                 course_id, course_title, lecture, next_info=next_info,
             )
@@ -186,7 +188,13 @@ def _drive_lectures(client: ICourseClient, db: Database,
                     "date": lecture.get("date", ""),
                     "summary": summary,
                 })
+                succeeded += 1
+            elif (db.get_lecture(sub_id) or {}).get("processed_at"):
+                skipped += 1
+            else:
+                failed += 1
         except Exception:
+            failed += 1
             reporter.lecture_error(sub_id)
             traceback.print_exc()
         finally:
@@ -195,6 +203,8 @@ def _drive_lectures(client: ICourseClient, db: Database,
             # PPTPipeline.submit released the cache.
             scheduler.image_cache.discard(sub_id)
             scheduler.audio_downloader.release(sub_id)
+
+    reporter.lecture_results(len(all_lectures), succeeded, failed, skipped)
 
 
 def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
@@ -214,7 +224,11 @@ def _send_email(emailer: Emailer | None, db: Database, reporter: Reporter,
                 })
         reporter.email_recovered_unsent(len(unsent))
 
-    if not (emailer and email_items):
+    if not email_items:
+        reporter.info("[Email] No successful summaries pending; no email will be sent.")
+        return
+    if not emailer:
+        reporter.info("[Email] Email is not configured; summaries remain pending.")
         return
     try:
         reporter.email_summary(len(email_items))

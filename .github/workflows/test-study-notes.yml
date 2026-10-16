@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: pip install pillow markdown requests pygments
+      - run: pip install pillow markdown requests pygments openai
       - run: python scripts/test_study_notes.py
+      - run: python scripts/test_summarizer.py
       - run: node --check frontend/js/render.js

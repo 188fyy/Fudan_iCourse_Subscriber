@@ -10,6 +10,9 @@
 - Secrets：`STUID`、`UISPSW`、`COURSE_IDS`、`DEEPSEEK_API_KEY`、`SMTP_EMAIL`、`SMTP_PASSWORD`、`RECEIVER_EMAIL`。发送邮箱使用 QQ SMTP 授权码。
 - 在 Settings → Pages 中将 Source 设为 GitHub Actions；在 Actions 中启用 Fork 工作流并运行 Deploy Frontend。
 - 离线检查：`python scripts/test_study_notes.py`。GitHub 的 Test Study Notes 工作流也会自动执行这些检查。
+- 笔记正文篇幅仅按音频转录计算：转录字符数除以 4、四舍五入，目标限制在 500～8000 字；参考范围为目标的 85%～115%（上限 8000 字），不强制凑字数。PPT 仍作为补充材料，不增加目标篇幅。
+- 每个模型最多进行两次生成尝试（SDK 原有网络重试保持默认）：输出截断时目标篇幅降低 25% 重试，空响应或超时按原目标重试；其他失败继续尝试已配置的备用模型。日志记录结束原因和 token 用量，不记录课程正文。
+- 失败总结可用 **Single Run** 重试：`course_ids` 用英文逗号分隔，`max_lectures` 填 `0`。运行结束显示成功、失败及跳过课次数；没有待发送的成功摘要时不会发邮件。额外离线检查：`python scripts/test_summarizer.py`。
 
 
 自动监控复旦大学 iCourse 智慧教学平台的课程更新，对新课次的录播视频进行**语音转文字 + PPT OCR + AI 摘要**，并通过邮件推送到你的邮箱。

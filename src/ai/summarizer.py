@@ -2,7 +2,7 @@
 
 import time
 
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 
 from src.runtime import config
 from src.ai.study_notes import STUDY_PROMPT, format_notes
@@ -17,7 +17,7 @@ SYSTEM_PROMPT= r"""你是一个专业的课程助教。你的任务是根据用�
    - 尽可能用完整的段落来组织老师的讲解，适量使用bullet point，不得过度使用bullet point
    - 合理使用加粗、列表、表格、分级标题、段首小标题等形式来组织信息，确保结构清晰。
 4. **公式规范**：所有数学公式或科学变量必须使用规范的 LaTeX 语法（行内公式用 $...$，行间公式用 $$...$$）。由于图床限制，latex公式中不要出现中文。
-5. **忠于原文与详略得当**：总结必须有详有略，总体以详细风格为主，长度适宜或偏长（例如，对于90分钟长度的课程，总结长度应为5000字左右；135分钟的课程，应为8000字左右。输出和输入的长度压缩比例在1:8左右为宜），
+5. **忠于原文与详略得当**：总结必须有详有略，总体以详细风格为主。笔记正文篇幅参考用户提供的目标范围，该范围仅按音频转录长度计算，不包含证据表和思维导图；不为凑字数重复或扩写。PPT 用于补充公式、定义和案例，其文字数量不增加目标篇幅。
 包含具体的推导细节、案例、文献或者核心概念，不要过度概括，也不要仅仅原文复述。禁止捏造录音中未提及的内容。
 6. 你需要格外注意课程中是否提及了作业、考试、签到、组队等关键事项，如果有的话，用三级标题【课程事项提醒】标注在开头。
 7. **文风示例**：以下是一个关于"梯度下降"的片段，展示了笔记总结过程中【错误的】和【正确的】的两种总结风格，请严格模仿后者。
@@ -68,6 +68,19 @@ SYSTEM_PROMPT= r"""你是一个专业的课程助教。你的任务是根据用�
    - 同时，需要注意的是，由于该平台以屏幕截图的方式记录ppt，因此，尽管我们提供的ocr版本已经尽最大努力进行了清洗，你收到的ppt仍然可能有无关网页、导航栏、桌面或系统页面等无关噪音。这些噪音不应被用于课程内容的总结。
    - 输出仍按之前的格式要求，不要保留时间戳标签，只把这些信息当作上下文辅助理解，不用说哪些来自转写哪些来自ppt，自然地合并录音转写和ppt中的知识，生成高质量笔记。"""
 
+def target_note_chars(transcript_chars: int) -> int:
+    """Round half up; OCR volume must never affect the writing budget."""
+    if transcript_chars < 0:
+        raise ValueError("transcript_chars must be non-negative")
+    return min(8000, max(500, (transcript_chars + 2) // 4))
+
+
+class IncompleteResponse(ValueError):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"Incomplete study notes response: {reason}")
+
+
 class Summarizer:
     """Course lecture summarizer with multi-provider fallback.
 
@@ -89,76 +102,115 @@ class Summarizer:
             for p in self.providers
         }
 
-    def _call_llm(self, client: OpenAI, model: str,
-                  title: str, content: str) -> str:
-        t0 = time.time()
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT + STUDY_PROMPT},
-                {
-                    "role": "user",
-                    # 注意：这里的 1:7 与 system prompt 中声称的 1:8 不一致是有意为之
-                    # （给模型一个略偏长的信号修正其实际输出偏短的倾向），勿"修复"。
-                    "content": f"以下是课程《{title}》的录音文本，根据长度，你应该输出的字符数大约为{len(content) // 7}字，请开始总结：\n\n{content}",
-                },
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=24000,
-            timeout=300,
-        )
-        if not response.choices:
-            raise ValueError("API returned empty choices — likely content filter or quota exceeded")
-        result = response.choices[0].message.content
-        if response.choices[0].finish_reason != "stop" or not result:
-            raise ValueError("Incomplete study notes response")
-        result = format_notes(result, content)
-        elapsed = time.time() - t0
-        # Token usage helps explain run cost — every provider's billing is
-        # token-based, and rate-limit decisions key off prompt size much
-        # more than character count.  Some providers (OpenAI-compatible)
-        # leave usage None on streaming or error paths, so fall back to a
-        # plain "no usage" line so the summary still prints.
+    @staticmethod
+    def _diagnose(model_id, attempt, target, content, t0, response=None,
+                  error_type=None):
+        choices = getattr(response, "choices", None)
+        choice = choices[0] if choices else None
+        result = getattr(getattr(choice, "message", None), "content", None)
+        reason = getattr(choice, "finish_reason", None)
+        # Only log known enum values; arbitrary provider text may contain data.
+        known_reasons = {"stop", "length", "content_filter", "tool_calls", "function_call"}
+        reason = reason if reason in known_reasons else "unknown"
         usage = getattr(response, "usage", None)
-        if usage is not None:
-            print(
-                f"[Summarizer] Done ({model}): "
-                f"{len(content)} chars input → {len(result)} chars output"
-                f" in {elapsed:.0f}s "
-                f"(tokens: prompt={getattr(usage,'prompt_tokens','?')}, "
-                f"completion={getattr(usage,'completion_tokens','?')})"
+        def token_value(name):
+            value = getattr(usage, name, None)
+            return value if isinstance(value, int) else "unknown"
+        print(
+            f"[Summarizer] model={model_id} attempt={attempt}/2 "
+            f"target_chars={target} input_chars={len(content)} "
+            f"elapsed={time.monotonic() - t0:.1f}s finish_reason={reason} "
+            f"body_chars={len(result) if isinstance(result, str) else 'unknown'} "
+            f"prompt_tokens={token_value('prompt_tokens')} "
+            f"completion_tokens={token_value('completion_tokens')} "
+            f"total_tokens={token_value('total_tokens')} "
+            f"error_type={error_type or 'none'}", flush=True,
+        )
+
+    def _call_llm(self, client: OpenAI, model: str, title: str, content: str,
+                  *, target_chars: int, attempt: int, model_id: str) -> str:
+        t0 = time.monotonic()
+        lower = (target_chars * 85 + 50) // 100
+        upper = min(8000, (target_chars * 115 + 50) // 100)
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT + STUDY_PROMPT},
+                    {"role": "user", "content": (
+                        f"以下是课程《{title}》的录音转录与 PPT 材料。"
+                        f"笔记正文目标约 {target_chars} 字，参考范围 {lower}～{upper} 字。"
+                        "此范围不包含证据表和思维导图；保留主要推导、案例与公式，"
+                        "不必凑字数。PPT 仅补充内容，不增加篇幅要求。"
+                        f"请输出完整 JSON 对象：\n\n{content}"
+                    )},
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=24000,
+                timeout=300,
             )
-        else:
-            print(
-                f"[Summarizer] Done ({model}): {len(content)} chars input"
-                f" → {len(result)} chars output in {elapsed:.0f}s"
-            )
-        return result
+        except Exception as exc:
+            self._diagnose(model_id, attempt, target_chars, content, t0,
+                           error_type=type(exc).__name__)
+            raise
+        self._diagnose(model_id, attempt, target_chars, content, t0, response)
+        if not response.choices:
+            raise IncompleteResponse("empty_choices")
+        choice = response.choices[0]
+        # Check finish reason first: filtering must never trigger an empty-body retry.
+        if choice.finish_reason not in ("stop", None):
+            reason = choice.finish_reason
+            if reason not in {"length", "content_filter", "tool_calls", "function_call"}:
+                reason = "unknown_finish_reason"
+            raise IncompleteResponse(reason)
+        result = choice.message.content
+        if not result or not result.strip():
+            raise IncompleteResponse("empty_body")
+        if choice.finish_reason != "stop":
+            raise IncompleteResponse("unknown_finish_reason")
+        try:
+            return format_notes(result, content)
+        except Exception as exc:
+            # Parser exceptions may include snippets of model output. Keep them private.
+            raise ValueError(f"Invalid study notes format ({type(exc).__name__})") from None
 
-    def summarize(self, title: str, content: str) -> tuple[str, str]:
-        """Summarize lecture, trying providers in MODEL_PROVIDERS order.
+    def summarize(self, title: str, content: str, *,
+                  transcript_chars: int) -> tuple[str, str]:
+        """Generate notes with a transcript-only budget and bounded model retries.
 
-        Returns (summary, model_used) where model_used is "{provider}/{model}".
-
-        Raises:
-            RuntimeError: if all providers/models fail.
+        SDK network retries retain their defaults. Each model receives at most
+        two application-level attempts; other providers remain fallbacks.
         """
+        target = target_note_chars(transcript_chars)
         if not content or not content.strip():
             return ("（内容为空）", "")
-
         errors = []
         for provider in self.providers:
             client = self._clients[provider["name"]]
             for model in provider["models"]:
                 model_id = f"{provider['name']}/{model}"
-                try:
-                    result = self._call_llm(client, model, title, content)
-                    return (result, model_id)
-                except Exception as e:
-                    print(f"[Summarizer] {model_id} failed: "
-                          f"{type(e).__name__}: {e}")
-                    errors.append(f"{model_id}: {e}")
-
-        raise RuntimeError(
-            "All LLM models failed:\n" + "\n".join(errors)
-        )
+                model_target = target
+                for attempt in (1, 2):
+                    try:
+                        result = self._call_llm(
+                            client, model, title, content, target_chars=model_target,
+                            attempt=attempt, model_id=model_id,
+                        )
+                        return (result, model_id)
+                    except Exception as exc:
+                        retry = False
+                        # Never log arbitrary API exception messages (may echo input).
+                        if isinstance(exc, IncompleteResponse):
+                            detail = str(exc)
+                            retry = exc.reason in {"length", "empty_choices", "empty_body"}
+                            if exc.reason == "length":
+                                model_target = (model_target * 75 + 50) // 100
+                        else:
+                            detail = type(exc).__name__
+                            retry = isinstance(exc, (APITimeoutError, TimeoutError))
+                        print(f"[Summarizer] {model_id} attempt={attempt}/2 failed: "
+                              f"{detail}", flush=True)
+                        errors.append(f"{model_id} attempt={attempt}: {detail}")
+                        if attempt == 2 or not retry:
+                            break
+        raise RuntimeError("All LLM models failed:\n" + "\n".join(errors))

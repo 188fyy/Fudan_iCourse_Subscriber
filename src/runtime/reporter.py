@@ -299,6 +299,15 @@ class Reporter:
             print(f"\n[Email] Sending summary for {n} lecture(s)...",
                   flush=True)
 
+    def lecture_results(self, attempted: int, succeeded: int,
+                        failed: int, skipped: int):
+        with self._lock:
+            print(f"[Results] attempted={attempted} succeeded={succeeded} "
+                  f"failed={failed} skipped={skipped}", flush=True)
+            if failed:
+                print(f"::warning::{failed} lecture(s) failed; inspect lecture logs. "
+                      "Only successful summaries can be emailed.", flush=True)
+
     def email_failed(self):
         with self._lock:
             print("[Email] Send failed, lectures will be retried next run.",
