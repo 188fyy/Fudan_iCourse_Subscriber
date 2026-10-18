@@ -18,11 +18,23 @@ CONTENT = '''=== 时间段 00:00 – 10:00 ===
 '''
 
 
-def payload(annotations=None):
-    return json.dumps({"notes": "### 梯度下降\n详细笔记。\n### 推导\n推导过程。\n### 历史背景\n背景介绍。",
-                       "annotations": annotations or [],
-                       "mindmap": {"topic": "优化方法", "children": [
-                           {"topic": "梯度下降", "children": [{"topic": "推导", "children": []}]}]}}, ensure_ascii=False)
+def payload(annotations=None, **overrides):
+    data = {"notes": "### 梯度下降\n详细笔记。\n### 推导\n推导过程。\n### 历史背景\n背景介绍。",
+            "annotations": annotations or [],
+            "mainline": "围绕如何减小误差，先认识梯度下降，再理解推导依据，最后了解其发展背景。",
+            "transitions": [
+                {"from_topic": "梯度下降", "to_topic": "推导",
+                 "text": "梯度下降给出更新方法，接着通过推导解释这一方法为何能减小误差。"},
+                {"from_topic": "推导", "to_topic": "历史背景",
+                 "text": "推导解释了方法的依据，随后转向历史背景，补充对方法发展过程的认识。"}]}
+    data.update(overrides)
+    return json.dumps(data, ensure_ascii=False)
+
+
+def old_map_note():
+    return '### 旧笔记\n正文。\n\n```icourse-mindmap\n' + json.dumps({
+        "topic": "优化方法", "children": [{"topic": "梯度下降", "children": []}]},
+        ensure_ascii=False) + '\n```\n'
 
 
 class StudyNotesTests(unittest.TestCase):
@@ -66,8 +78,8 @@ class StudyNotesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_tree(tree)
 
-    def test_email_and_pdf_images(self):
-        note = format_notes(payload(), CONTENT)
+    def test_legacy_email_and_pdf_images(self):
+        note = old_map_note()
         cids = {}
         html = _md_to_html(note, cids)
         self.assertIn("cid:mindmap-", html)
@@ -75,6 +87,77 @@ class StudyNotesTests(unittest.TestCase):
         pdf_html = _md_to_html(note)
         self.assertIn("data:image/png;base64,", pdf_html)
         self.assertNotIn("icourse-mindmap", pdf_html)
+
+    def test_learning_logic_order_and_no_new_maps(self):
+        note = format_notes(payload(), CONTENT)
+        self.assertNotIn("思维导图", note)
+        self.assertNotIn("icourse-mindmap", note)
+        self.assertEqual(note.count("> **本课主线**"), 1)
+        self.assertEqual(note.count("> **学习逻辑｜"), 2)
+        self.assertLess(note.index("本课主线"), note.index("### 梯度下降"))
+        self.assertLess(note.index("详细笔记。"), note.index("学习逻辑｜梯度下降 → 推导"))
+        self.assertLess(note.index("学习逻辑｜梯度下降 → 推导"), note.index("### 推导"))
+        self.assertLess(note.index("背景介绍。"), note.index("老师强调与考试范围"))
+
+    def test_reminders_and_subsections_are_not_transition_targets(self):
+        note = format_notes(payload(notes="### 【课程事项提醒】\n下周交作业。\n\n"
+            "### 梯度下降\n正文。\n#### 更新方向\n细节。\n##### 例子\n例子。\n"
+            "### 推导\n推导过程。\n### 历史背景\n背景。"), CONTENT)
+        self.assertLess(note.index("下周交作业。"), note.index("本课主线"))
+        self.assertLess(note.index("本课主线"), note.index("### 梯度下降"))
+        self.assertEqual(note.count("> **学习逻辑｜"), 2)
+        self.assertNotIn("学习逻辑｜更新方向", note)
+
+    def test_single_section_and_fenced_headings(self):
+        note = format_notes(payload(notes="### 唯一板块\n正文。\n\n```markdown\n"
+            "### 示例标题\n```\n", transitions=[]), CONTENT)
+        self.assertIn("本课主线", note)
+        self.assertNotIn("学习逻辑｜", note)
+
+    def test_sections_after_fenced_code_remain_anchorable(self):
+        for fence in ("```", "~~~~"):
+            note = format_notes(payload(notes="### 梯度下降\n正文。\n" + fence +
+                "markdown\n### 示例标题\n" + fence + "\n### 推导\n推导过程。\n"
+                "### 历史背景\n背景。"), CONTENT)
+            self.assertEqual(note.count("> **学习逻辑｜"), 2)
+            self.assertLess(note.index("学习逻辑｜梯度下降 → 推导"), note.index("### 推导"))
+
+    def test_invalid_learning_logic_is_rejected(self):
+        original = json.loads(payload())
+        cases = [dict(mainline=""), dict(mainline="两行\n文本"), dict(mainline="字" * 241),
+                 dict(transitions=[]), dict(transitions=None),
+                 dict(transitions=original["transitions"][::-1]),
+                 dict(transitions=[original["transitions"][0]] * 2),
+                 dict(transitions=[None, None]),
+                 dict(notes="### 重复\n正文\n### 重复\n正文"), dict(notes="#### 子板块\n正文")]
+        for change in cases:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                format_notes(payload(**change), CONTENT)
+        for field in ("mainline", "transitions"):
+            data = original.copy()
+            del data[field]
+            with self.assertRaises(ValueError):
+                format_notes(json.dumps(data), CONTENT)
+
+    def test_learning_cards_email_and_pdf_html(self):
+        note = format_notes(payload(), CONTENT)
+        for cids in ({}, None):
+            html = _md_to_html(note, cids)
+            self.assertEqual(html.count('class="icourse-learning"'), 3)
+            self.assertIn("background:#eff6ff", html)
+            self.assertIn("break-inside:avoid", html)
+            self.assertNotIn("ICOURSE", html)
+            if cids is not None:
+                self.assertEqual(cids, {})
+        self.assertNotIn('class="icourse-learning"', _md_to_html("> 普通引文"))
+
+    def test_card_text_is_literal_and_cannot_inject_html_or_markdown(self):
+        note = format_notes(payload(mainline='<img src=x onerror=alert(1)> **文本** [链接](x)'), CONTENT)
+        html = _md_to_html(note)
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<a ", html)
+        self.assertNotIn("<strong>文本</strong>", html)
+        self.assertIn("&lt;img", html)
 
     def test_old_notes_unchanged(self):
         self.assertIn("旧笔记", _md_to_html("### 旧笔记\n正常内容"))

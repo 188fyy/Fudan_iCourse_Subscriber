@@ -18,7 +18,8 @@ from src.runtime.reporter import Reporter
 def response(reason="stop", body=None, *, empty_choices=False, usage=True):
     if body is None:
         body = json.dumps({"notes": "### 内容\n完整但简短的笔记。",
-                           "annotations": [], "mindmap": {"topic": "内容"}})
+                           "annotations": [], "mainline": "通过本课的讲解理解核心内容。",
+                           "transitions": []})
     return NS(choices=[] if empty_choices else [
         NS(finish_reason=reason, message=NS(content=body))],
         usage=NS(prompt_tokens=123, completion_tokens=45, total_tokens=168)

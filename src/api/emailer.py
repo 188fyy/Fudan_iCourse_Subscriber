@@ -19,6 +19,7 @@ from pygments.formatters import HtmlFormatter
 
 from src.runtime import config
 from src.ai.mindmap_render import stash_maps
+from src.ai.study_notes import style_learning_cards
 
 _MD_EXTENSIONS= ["tables", "fenced_code", "nl2br", "sane_lists", "codehilite"]
 
@@ -64,6 +65,8 @@ hr {
     margin: 28px 0;
 }
 strong { color: #c0392b; }
+.icourse-learning strong { color: #1e40af; }
+.icourse-learning p { margin: 0; }
 table {
     border-collapse: collapse;
     width: 100%;
@@ -263,7 +266,7 @@ def _md_to_html(md_text: str, cid_images: dict | None = None) -> str:
 
     for key, diagram in mindmaps.items():
         html = html.replace("<p>" + key + "</p>", diagram).replace(key, diagram)
-    return html
+    return style_learning_cards(html)
 
 
 def _resolve_src(url: str, img_data: bytes | None,
