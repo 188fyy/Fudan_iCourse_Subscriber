@@ -91,6 +91,11 @@ function _renderMarkdown(mdText) {
     rawHtml = rawHtml.replace("<p>" + key + "</p>", map).replace(key, map);
   });
   var restored = _restoreFormulas(rawHtml, stashed.formulas);
+  // Match only the generated study cards; retain ordinary quotations as-is.
+  restored = restored.replace(
+    /<blockquote>(?=\s*<p><strong>(?:本课主线|学习逻辑｜)[^<]*<\/strong>)/g,
+    '<blockquote class="icourse-learning">'
+  );
   return DOMPurify.sanitize(restored);
 }
 

@@ -44,6 +44,9 @@
 .prose code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.9em; }
 .prose p code, .prose li code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; }
 .prose blockquote { border-left: 4px solid #3498db; padding: 6px 14px; margin: 0.8em 0; background: #f8f9fa; color: #555; }
+.prose blockquote.icourse-learning { border: 1px solid #93c5fd; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 12px 16px; margin: 20px 0; background: #eff6ff; color: #1e3a5f; break-inside: avoid; overflow-wrap: anywhere; }
+.prose .icourse-learning strong { color: #1e40af; }
+.prose .icourse-learning p { margin: 0; }
 .prose hr { border: none; border-top: 1px solid #e0e0e0; margin: 1.5em 0; }
 
 /* Lecture state badges */
