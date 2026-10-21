@@ -5,7 +5,7 @@ import time
 from openai import APITimeoutError, OpenAI
 
 from src.runtime import config
-from src.ai.study_notes import STUDY_PROMPT, format_notes
+from src.ai.study_notes import STUDY_PROMPT, NotesFormatError, format_notes
 
 SYSTEM_PROMPT= r"""你是一个专业的课程助教。你的任务是根据用户提供的课程录音文本和ppt文字ocr部分，生成用于学生自学和期末复习的详细笔记。
 1. **直接输出**：不要包含任何"好的"、"没问题"、"以下是总结"等客套话，不要输出全局课程名称大标题（由系统自动生成），直接开始总结即可。
@@ -81,6 +81,15 @@ class IncompleteResponse(ValueError):
         super().__init__(f"Incomplete study notes response: {reason}")
 
 
+class InvalidNotesResponse(ValueError):
+    """Carry the previous response for correction, without exposing it in logs."""
+
+    def __init__(self, error: NotesFormatError, raw: str):
+        self.error = error
+        self.raw = raw
+        super().__init__(str(error))
+
+
 class Summarizer:
     """Course lecture summarizer with multi-provider fallback.
 
@@ -128,7 +137,8 @@ class Summarizer:
         )
 
     def _call_llm(self, client: OpenAI, model: str, title: str, content: str,
-                  *, target_chars: int, attempt: int, model_id: str) -> str:
+                  *, target_chars: int, attempt: int, model_id: str,
+                  correction: InvalidNotesResponse | None = None) -> str:
         t0 = time.monotonic()
         lower = (target_chars * 85 + 50) // 100
         upper = min(8000, (target_chars * 115 + 50) // 100)
@@ -144,7 +154,15 @@ class Summarizer:
                         "不必凑字数。PPT 仅补充内容，不增加篇幅要求。"
                         f"请输出完整 JSON 对象：\n\n{content}"
                     )},
-                ],
+                ] + ([
+                    {"role": "assistant", "content": correction.raw},
+                    {"role": "user", "content": (
+                        f"上次输出未通过格式校验：{correction.error}。"
+                        "请依据原始课程材料纠正该问题，同时检查其余协议要求。"
+                        "重新输出完整 JSON 对象，包含 notes、annotations、mainline、transitions；"
+                        "不要只输出修改片段，不添加材料中不存在的内容。"
+                    )},
+                ] if correction is not None else []),
                 response_format={"type": "json_object"},
                 max_tokens=24000,
                 timeout=300,
@@ -170,9 +188,8 @@ class Summarizer:
             raise IncompleteResponse("unknown_finish_reason")
         try:
             return format_notes(result, content)
-        except Exception as exc:
-            # Parser exceptions may include snippets of model output. Keep them private.
-            raise ValueError(f"Invalid study notes format ({type(exc).__name__})") from None
+        except NotesFormatError as exc:
+            raise InvalidNotesResponse(exc, result) from None
 
     def summarize(self, title: str, content: str, *,
                   transcript_chars: int) -> tuple[str, str]:
@@ -190,17 +207,23 @@ class Summarizer:
             for model in provider["models"]:
                 model_id = f"{provider['name']}/{model}"
                 model_target = target
+                correction = None
                 for attempt in (1, 2):
                     try:
                         result = self._call_llm(
                             client, model, title, content, target_chars=model_target,
                             attempt=attempt, model_id=model_id,
+                            correction=correction,
                         )
                         return (result, model_id)
                     except Exception as exc:
                         retry = False
                         # Never log arbitrary API exception messages (may echo input).
-                        if isinstance(exc, IncompleteResponse):
+                        if isinstance(exc, InvalidNotesResponse):
+                            detail = str(exc.error)
+                            correction = exc
+                            retry = True
+                        elif isinstance(exc, IncompleteResponse):
                             detail = str(exc)
                             retry = exc.reason in {"length", "empty_choices", "empty_body"}
                             if exc.reason == "length":

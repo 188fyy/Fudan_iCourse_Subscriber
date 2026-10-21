@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openai import APITimeoutError
 from src.ai.summarizer import Summarizer, target_note_chars
+from src.ai.study_notes import NotesFormatError, format_notes
 from src.runtime.reporter import Reporter
 
 
@@ -93,8 +94,6 @@ class SummarizerTests(unittest.TestCase):
     def test_nonretryable_results_use_backup_immediately(self):
         for first in [response("content_filter", ""), response("tool_calls", ""),
                       response("unexpected PRIVATE TEXT"), response(None),
-                      response(body="INVALID PRIVATE JSON"),
-                      response(body='{"notes":"x"}'),
                       RuntimeError("PRIVATE API BODY")]:
             with self.subTest(first=type(first).__name__):
                 self.create.reset_mock()
@@ -103,6 +102,71 @@ class SummarizerTests(unittest.TestCase):
                 self.assertEqual(model, "test/backup")
                 self.assertEqual(self.create.call_count, 2)
         self.assertNotIn("PRIVATE", self.output.getvalue())
+
+    def test_format_errors_are_specific_and_corrected_once(self):
+        base = {"notes": "### A\nPRIVATE BODY\n### B\nbody",
+                "annotations": [], "mainline": "mainline", "transitions": [
+                    {"from_topic": "A", "to_topic": "B", "text": "transition"}]}
+        cases = [
+            ("INVALID PRIVATE JSON", "invalid_json"),
+            ("[]", "invalid_payload"),
+            ('{"notes":"PRIVATE BODY"}', "missing_notes_or_annotations"),
+            (json.dumps(dict(base, notes="### A\nbody\n### A\nbody")), "main_headings_invalid"),
+            (json.dumps(dict(base, mainline="x" * 241)), "mainline_invalid"),
+            (json.dumps(dict(base, mainline="one\ntwo")), "mainline_invalid"),
+            (json.dumps(dict(base, transitions=[])), "transition_count_mismatch"),
+            (json.dumps(dict(base, transitions=[{
+                "from_topic": "A", "to_topic": "wrong", "text": "transition"}])),
+             "transition_heading_mismatch"),
+            (json.dumps(dict(base, transitions=[{
+                "from_topic": "A", "to_topic": "B", "text": ""}])),
+             "transition_text_invalid"),
+        ]
+        for raw, code in cases:
+            with self.subTest(code=code, raw=raw):
+                with self.assertRaisesRegex(NotesFormatError, code):
+                    format_notes(raw, "materials")
+                self.create.reset_mock()
+                self.create.side_effect = [response(body=raw), response()]
+                _, model = self.generate()
+                self.assertEqual(model, "test/primary")
+                self.assertEqual(self.create.call_count, 2)
+                messages = self.create.call_args_list[1].kwargs["messages"]
+                self.assertEqual(messages[2], {"role": "assistant", "content": raw})
+                self.assertIn(code, messages[3]["content"])
+                self.assertIn("完整 JSON", messages[3]["content"])
+                self.assertIn(code, self.output.getvalue())
+        self.assertNotIn("PRIVATE", self.output.getvalue())
+
+    def test_repeated_invalid_notes_fall_back_without_leaking_correction(self):
+        self.create.side_effect = [response(body="PRIVATE BAD JSON")] * 2 + [response()]
+        _, model = self.generate()
+        self.assertEqual(model, "test/backup")
+        self.assertEqual(self.create.call_count, 3)
+        self.assertEqual(len(self.create.call_args_list[2].kwargs["messages"]), 2)
+        self.assertNotIn("PRIVATE", self.output.getvalue())
+
+    def test_all_invalid_models_fail_with_specific_errors_and_attempt_cap(self):
+        self.create.side_effect = [response(body="PRIVATE BAD JSON")] * 4
+        with self.assertRaisesRegex(RuntimeError, "invalid_json") as raised:
+            self.generate()
+        self.assertEqual(self.create.call_count, 4)
+        self.assertIn("test/backup attempt=2", str(raised.exception))
+        self.assertNotIn("PRIVATE", str(raised.exception))
+        self.assertNotIn("PRIVATE", self.output.getvalue())
+
+    def test_format_failure_can_switch_provider(self):
+        backup = Mock()
+        self.engine.providers = [{"name": "test", "models": ["primary"]},
+                                 {"name": "other", "models": ["fallback"]}]
+        self.engine._clients["other"] = backup
+        self.create.side_effect = [response(body="bad JSON")] * 2
+        backup.chat.completions.create.return_value = response()
+        _, model = self.generate()
+        self.assertEqual(model, "other/fallback")
+        self.assertEqual(self.create.call_count, 2)
+        backup.chat.completions.create.assert_called_once()
+        self.assertEqual(len(backup.chat.completions.create.call_args.kwargs["messages"]), 2)
 
     def test_attempt_cap_and_target_reset_for_backup(self):
         self.create.side_effect = [response("length")] * 4

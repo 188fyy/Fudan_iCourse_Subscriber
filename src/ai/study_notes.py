@@ -53,10 +53,21 @@ def style_learning_cards(html):
     )
 
 
-def _sentence(value):
+class NotesFormatError(ValueError):
+    """Static, public-safe validation details; never include model text."""
+
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(f"{code}: {message}")
+
+
+def _sentence(value, field="learning_logic"):
     if (not isinstance(value, str) or not value.strip() or len(value) > 240
             or "\n" in value or "\r" in value):
-        raise ValueError("Learning logic must be a nonempty single line of at most 240 characters")
+        raise NotesFormatError(
+            f"{field}_invalid",
+            f"{field} must be a nonempty single line of at most 240 characters",
+        )
     # Keep model text literal in both Markdown renderers, including HTML.
     # Entities avoid creating \( or \[ delimiters in the formula-stashing step.
     return re.sub(r"[\\`*_{}\[\]()#+!|~$]", lambda m: f"&#{ord(m[0])};",
@@ -83,18 +94,18 @@ def _learning_insertions(notes, payload):
         if m[1].strip() not in {"【课程事项提醒】", "课程事项提醒"}]
     titles = [title for _, title in headings]
     if not titles or len(set(titles)) != len(titles):
-        raise ValueError("Main teaching headings must be present and unique")
-    mainline = _sentence(payload.get("mainline"))
+        raise NotesFormatError("main_headings_invalid", "Main teaching headings must be present and unique")
+    mainline = _sentence(payload.get("mainline"), "mainline")
     transitions = payload.get("transitions")
     if not isinstance(transitions, list) or len(transitions) != len(titles) - 1:
-        raise ValueError("Exactly one transition is required per adjacent pair of main sections")
+        raise NotesFormatError("transition_count_mismatch", "Exactly one transition is required per adjacent pair of main sections")
     insertions = [(headings[0][0], "> **本课主线**\n> " + mainline + "\n\n")]
     for index, item in enumerate(transitions):
         if (not isinstance(item, dict) or item.get("from_topic") != titles[index]
                 or item.get("to_topic") != titles[index + 1]):
-            raise ValueError("Transition headings must match adjacent main sections in order")
-        text = _sentence(item.get("text"))
-        label = _sentence(titles[index] + " → " + titles[index + 1])
+            raise NotesFormatError("transition_heading_mismatch", "Transition headings must match adjacent main sections in order")
+        text = _sentence(item.get("text"), "transition_text")
+        label = _sentence(titles[index] + " → " + titles[index + 1], "transition_label")
         insertions.append((headings[index + 1][0],
                            "> **学习逻辑｜" + label + "**\n> " + text + "\n\n"))
     return insertions
@@ -136,11 +147,16 @@ def _audio_sections(content):
 
 
 def format_notes(raw, content):
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        raise NotesFormatError("invalid_json", "Response must be a valid JSON object") from None
+    if not isinstance(payload, dict):
+        raise NotesFormatError("invalid_payload", "Response must be a JSON object")
     notes = payload.get("notes")
     annotations = payload.get("annotations")
     if not isinstance(notes, str) or not notes.strip() or not isinstance(annotations, list):
-        raise ValueError("Missing notes or annotations")
+        raise NotesFormatError("missing_notes_or_annotations", "notes must be nonempty text and annotations must be an array")
     # Only the validated annotation renderer may introduce these badges.
     for label in LABELS:
         notes = notes.replace(f"【{label}】", "")
