@@ -1,0 +1,92 @@
+name: Diagnose DeepSeek API
+on:
+  push:
+    branches: [codex/diagnose-deepseek-20261029]
+    paths: [.github/workflows/diagnose-deepseek.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  connectivity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test saved key against official DeepSeek Flash API
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+          
+          raw = os.environ.get("DEEPSEEK_API_KEY", "")
+          key = raw.strip()
+          base = os.environ.get("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com/v1"
+          print("key_present=" + str(bool(key)), flush=True)
+          print("outer_whitespace=" + str(raw != key), flush=True)
+          print("internal_whitespace=" + str(any(c.isspace() for c in key)), flush=True)
+          print("wrapped_in_quotes=" + str(key.startswith(('"', "'")) or key.endswith(('"', "'"))), flush=True)
+          print("contains_bearer_prefix=" + str(key.lower().startswith("bearer ")), flush=True)
+          print("configured_base_is_official=" + str(base.rstrip("/") in ("https://api.deepseek.com", "https://api.deepseek.com/v1")), flush=True)
+          if not key:
+              print("RESULT: missing DEEPSEEK_API_KEY")
+              sys.exit(1)
+          
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+          
+          opener = urllib.request.build_opener(NoRedirect)
+          def request(path, payload=None):
+              data = json.dumps(payload).encode() if payload is not None else None
+              req = urllib.request.Request(
+                  "https://api.deepseek.com/v1" + path, data=data,
+                  headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+                  method="POST" if data is not None else "GET",
+              )
+              try:
+                  with opener.open(req, timeout=60) as response:
+                      body = json.load(response)
+                      print(path + ": HTTP " + str(response.status), flush=True)
+                      return body
+              except urllib.error.HTTPError as exc:
+                  categories = {400: "invalid request", 401: "authentication failed",
+                                402: "insufficient balance", 403: "forbidden",
+                                404: "not found", 422: "invalid parameters", 429: "rate limited"}
+                  print(path + ": HTTP " + str(exc.code) + " (" + categories.get(exc.code, "HTTP error") + ")", flush=True)
+              except Exception as exc:
+                  print(path + ": " + type(exc).__name__, flush=True)
+              return None
+          
+          models = request("/models")
+          if models is not None:
+              print("flash_in_models=" + str(any(m.get("id") == "deepseek-flash" for m in models.get("data", []))), flush=True)
+          result = request("/chat/completions", {
+              "model": "deepseek-flash",
+              "messages": [{"role": "user", "content": 'Return only this JSON object: {"ok": true}'}],
+              "response_format": {"type": "json_object"},
+              "thinking": {"type": "disabled"},
+              "max_tokens": 128,
+              "stream": False,
+          })
+          if result is not None:
+              choices = result.get("choices") or []
+              valid = False
+              if choices:
+                  try:
+                      valid = json.loads(choices[0].get("message", {}).get("content") or "").get("ok") is True
+                  except (ValueError, AttributeError):
+                      pass
+              print("flash_json_reply_valid=" + str(valid), flush=True)
+              usage = result.get("usage") or {}
+              print("total_tokens=" + str(usage.get("total_tokens", "unknown")), flush=True)
+              print("RESULT: " + ("PASS" if valid else "response validation failed"), flush=True)
+              sys.exit(0 if valid else 1)
+          print("RESULT: FAIL; see HTTP status above", flush=True)
+          sys.exit(1)
+          PY
