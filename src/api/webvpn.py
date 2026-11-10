@@ -183,15 +183,6 @@ class WebVPNSession:
 
         print("[*] Starting iCourse CAS authentication through WebVPN...")
 
-        # Pre-flight: probe the WebVPN portal.  A cold session redirects to
-        # /login instantly (status 302); a hot session returns 200.  Fail
-        # fast on cold — login_with_retry() in main.py will re-login.
-        warmup = self.session.get(
-            config.WEBVPN_BASE + "/", allow_redirects=False, timeout=5,
-        )
-        if warmup.status_code != 200:
-            raise RuntimeError("WebVPN session cold — re-login needed")
-
         idp_vpn_base = get_vpn_url(config.IDP_BASE)
 
         # Step 1: Initiate CAS login via casapi.  Use allow_redirects=True
@@ -305,7 +296,13 @@ class WebVPNSession:
 
         login_token = data.get("loginToken", "")
         if not login_token:
-            raise RuntimeError("No loginToken in iCourse CAS response")
+            raise RuntimeError(
+                "No loginToken in iCourse CAS response; "
+                f"data_type={type(data.get('data')).__name__}; "
+                f"module_count={len(data.get('moduleCodes') or [])}; "
+                f"module_code_present={bool(data.get('moduleCode'))}; "
+                f"nested_token_present={isinstance(data.get('data'), dict) and bool(data['data'].get('loginToken'))}"
+            )
         print("    loginToken: OK")
 
         # Step 6: Get CAS ticket (through WebVPN)
