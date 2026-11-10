@@ -574,7 +574,7 @@ class WebVPNSession:
         for attempt in range(3):
             try:
                 resp = self.session.get(
-                    ticket_url, allow_redirects=True, timeout=20
+                    ticket_url, allow_redirects=True, timeout=90
                 )
                 if resp.status_code == 200:
                     print("    Session established.")
