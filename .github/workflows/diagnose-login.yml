@@ -41,6 +41,9 @@ jobs:
                           if isinstance(value, list): return [shape(v,depth+1) for v in value[:2]]
                           return type(value).__name__
                       print("auth_response_shape", shape(data), flush=True)
+                      import re
+                      modules = [m for m in (data.get("moduleCodes") or []) if isinstance(m, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,60}", m)]
+                      print("auth_modules", modules, "second", data.get("second") if isinstance(data.get("second"), bool) else None, flush=True)
                   except ValueError:
                       print("auth_non_json", response.status_code, flush=True)
               return response
