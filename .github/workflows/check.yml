@@ -166,6 +166,8 @@ jobs:
         env:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
+          ICOURSE_163_EMAIL: ${{ secrets.ICOURSE_163_EMAIL }}
+          ICOURSE_163_IMAP_AUTH_CODE: ${{ secrets.ICOURSE_163_IMAP_AUTH_CODE }}
           COURSE_IDS: ${{ secrets.COURSE_IDS }}
           CRAWL_TERM: ${{ secrets.CRAWL_TERM }}
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}

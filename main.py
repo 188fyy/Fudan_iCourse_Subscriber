@@ -26,6 +26,7 @@ from src.runtime.reporter import Reporter
 from src.runtime.scheduler import Scheduler
 from src.ai.summarizer import Summarizer
 from src.ai.transcriber import Transcriber
+from src.api.verification_mail import EmailVerificationError
 from src.api.webvpn import WebVPNSession
 
 
@@ -47,6 +48,8 @@ def login_with_retry(max_attempts: int = 10) -> WebVPNSession:
             print("[Login] iCourse CAS...")
             vpn.authenticate_icourse()
             return vpn
+        except EmailVerificationError:
+            raise
         except Exception as e:
             if attempt < max_attempts - 1:
                 print(f"  Failed: {type(e).__name__}: {e}; retrying...")

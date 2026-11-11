@@ -18,6 +18,12 @@ from Crypto.Cipher import PKCS1_v1_5
 import base64
 
 from src.runtime import config
+from src.api.verification_mail import (
+    EmailVerificationError,
+    inbox_checkpoint,
+    open_verification_inbox,
+    wait_for_verification_code,
+)
 
 
 def encrypt_host(hostname: str) -> str:
@@ -304,6 +310,8 @@ class WebVPNSession:
             )
 
         login_token = data.get("loginToken", "")
+        if not login_token and data.get("second") is True:
+            login_token = self._complete_email_verification(data, payload, proxied=True)
         if not login_token:
             raise RuntimeError("No loginToken in iCourse CAS response")
         print("    loginToken: OK")
@@ -529,11 +537,81 @@ class WebVPNSession:
 
         # loginToken is at top level, not nested under "data"
         login_token = data.get("loginToken", "")
+        if not login_token and data.get("second") is True:
+            login_token = self._complete_email_verification(data, payload, proxied=False)
         if not login_token:
             raise RuntimeError("No loginToken in response")
 
         print("    loginToken: OK")
         return login_token
+
+    def _complete_email_verification(self, challenge: dict, initial: dict, *, proxied: bool) -> str:
+        if "userAndMail" not in (challenge.get("moduleCodes") or []):
+            raise EmailVerificationError("UIS requires a second factor and email is unavailable")
+        if not challenge.get("mail"):
+            raise EmailVerificationError("Bind the 163 mailbox to UIS before using email verification")
+        if not all(challenge.get(key) for key in ("userName", "authChainCode", "requestNumber")):
+            raise EmailVerificationError("UIS email challenge is missing authentication context")
+
+        base = config.IDP_BASE
+        origin = config.WEBVPN_BASE if proxied else base
+        referer = get_vpn_url(base) if proxied else base
+        headers = {"Origin": origin, "Referer": referer + "/ac/"}
+
+        def request(method: str, path: str, **kwargs) -> dict:
+            url = base + "/idp/" + path
+            if proxied:
+                url = get_vpn_url(url)
+            try:
+                response = self.session.request(
+                    method, url, headers=headers, timeout=30, **kwargs,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (requests.RequestException, ValueError):
+                raise EmailVerificationError(
+                    f"UIS email verification request failed at {path}"
+                ) from None
+            if not isinstance(data, dict):
+                raise EmailVerificationError(f"Unexpected UIS response at {path}")
+            return data
+
+        login_name = challenge["userName"]
+        chain_code = challenge["authChainCode"]
+        captcha = request("GET", "captcha/checkOpen", params={"type": "mail"})
+        if str(captcha.get("code")) == "200":
+            raise EmailVerificationError(
+                "UIS requires an interactive slider before sending email; complete verification in the browser"
+            )
+        image_captcha = request("POST", "authn/verifyCodeIsNeed", json={
+            "loginName": login_name, "chainCode": chain_code, "authModuleCode": "userAndMail",
+        })
+        if image_captcha.get("result"):
+            raise EmailVerificationError("UIS requires an interactive image CAPTCHA for email verification")
+
+        with open_verification_inbox() as inbox:
+            checkpoint = inbox_checkpoint(inbox)
+            sent = request("POST", "authn/sendMailMsg", json={
+                "loginName": login_name, "lck": initial["lck"], "pointJson": None, "token": None,
+            })
+            if str(sent.get("code")) != "200":
+                raise EmailVerificationError("UIS refused to send an email verification code")
+            print("    UIS verification email requested; waiting for a new message.")
+            code = wait_for_verification_code(inbox, checkpoint)
+
+        result = request("POST", "authn/authExecute", json={
+            "authModuleCode": "userAndMail",
+            "authChainCode": chain_code,
+            "entityId": initial["entityId"],
+            "requestNumber": challenge["requestNumber"],
+            "requestType": initial["requestType"],
+            "lck": initial["lck"],
+            "authPara": {"loginName": login_name, "mailCode": code},
+        })
+        if str(result.get("code")) != "200" or not result.get("loginToken"):
+            raise EmailVerificationError("UIS did not accept the email verification code")
+        print("    UIS email verification complete.")
+        return result["loginToken"]
 
     def _get_cas_ticket(self, login_token: str) -> str:
         """Step 6: Exchange loginToken for a CAS ticket URL."""
@@ -577,7 +655,7 @@ class WebVPNSession:
         for attempt in range(3):
             try:
                 resp = self.session.get(
-                    ticket_url, allow_redirects=True, timeout=20
+                    ticket_url, allow_redirects=True, timeout=90
                 )
                 if resp.status_code == 200:
                     print("    Session established.")
