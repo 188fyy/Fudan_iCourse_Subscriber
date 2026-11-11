@@ -166,6 +166,8 @@ jobs:
         env:
           StuId: ${{ secrets.STUID }}
           UISPsw: ${{ secrets.UISPSW }}
+          ICOURSE_163_EMAIL: ${{ secrets.ICOURSE_163_EMAIL }}
+          ICOURSE_163_IMAP_AUTH_CODE: ${{ secrets.ICOURSE_163_IMAP_AUTH_CODE }}
           COURSE_IDS: ${{ inputs.course_ids || secrets.COURSE_IDS }}
           MAX_LECTURES_PER_RUN: ${{ inputs.max_lectures || '1' }}
           USE_OFFICIAL_TRANSCRIPT: ${{ inputs.use_official_transcript && '1' || '' }}
