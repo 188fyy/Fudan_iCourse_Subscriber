@@ -1,0 +1,25 @@
+name: Probe CFFF connectivity
+on:
+  push:
+    branches: [codex/cfff-connectivity-20261127]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Resolve DNS and test HTTP
+        shell: bash
+        run: |
+          for host in opentrek.cfff.fudan.edu.cn console.cfff.fudan.edu.cn; do
+            echo "Host: $host"
+            getent ahostsv4 "$host" | awk '{print $1}' | sort -u || true
+            for path in models chat/completions; do
+              if [[ "$path" == models ]]; then
+                method=(--request GET)
+              else
+                method=(--request POST --header 'Content-Type: application/json' --data '{}')
+              fi
+              curl --noproxy '*' --silent --show-error --output /dev/null --connect-timeout 4 --max-time 6 --write-out "PATH=$path HTTP=%{http_code} TCP=%{time_connect}s IP=%{remote_ip}\n" "${method[@]}" "http://$host/token/v1/$path" || echo "curl exit=$?"
+            done
+          done
